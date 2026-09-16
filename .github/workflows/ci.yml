@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run unit tests
+        run: python -m pytest --basetemp .pytest-tmp-ci -q
+
+  guard-regression:
+    name: Guard safety regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      # 使用 mock 范围路由的离线回归测试；不访问 LLM、不需要密钥、不会产生费用。
+      - name: Run offline guard regression tests
+        run: |
+          python -m pytest \
+            tests/test_query_guard.py \
+            tests/test_query_scope.py \
+            tests/test_evidence_gate.py \
+            tests/test_query_guard_evaluation.py \
+            --basetemp .pytest-tmp-guard-ci \
+            -q
