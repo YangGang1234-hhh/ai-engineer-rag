@@ -6,12 +6,14 @@ import pytest  # 用于参数化测试两类生成异常。
 from sqlalchemy.pool import StaticPool  # 让内存 SQLite 在测试线程间共享同一连接。
 
 from pathlib import Path  # 用于清理测试上传的临时文件。
+from uuid import UUID
 from app.database import Base, get_db  # 导入数据库基类和依赖函数。
 from app import admin_auth, main  # 导入模块，便于替换外部依赖。
 from app.main import app  # 导入 FastAPI 应用。
-from app.models import Document, QueryAuditLog  # 用于创建测试记录。
+from app.models import AnswerFeedback, Document, QueryAuditLog  # 用于创建测试记录。
 from app.retrieval import RetrievedChunk  # 导入统一检索结果类型。
 from app.query_guard import QueryGuardDecision, QueryGuardResult
+from app.audit import record_query_audit
 
 
 @pytest.fixture(autouse=True)
@@ -372,7 +374,9 @@ def test_ask_api_returns_answer_citations_and_evidence(monkeypatch) -> None:
         )
 
         assert response.status_code == 200
-        assert response.json() == {
+        body = response.json()
+        assert UUID(body.pop("request_id"))
+        assert body == {
             "answer": "混合检索结合了两种检索方式。[1]",
             "citations": [1],
             "evidence": [
@@ -463,7 +467,9 @@ def test_ask_api_returns_insufficient_evidence_when_no_chunks(
 
         # 没有证据仍是一次正常处理，不应返回 500。
         assert response.status_code == 200
-        assert response.json() == {
+        body = response.json()
+        assert UUID(body.pop("request_id"))
+        assert body == {
             "answer": "知识库中没有足够证据回答该问题。",
             "citations": [],
             "evidence": [],
@@ -877,7 +883,9 @@ def test_ask_api_rejects_unsafe_input_before_retrieval(monkeypatch) -> None:
         )
 
         assert response.status_code == 200
-        assert response.json() == {
+        body = response.json()
+        assert UUID(body.pop("request_id"))
+        assert body == {
             "answer": "该请求包含不支持的指令，因此无法处理。",
             "citations": [], "evidence": [],
         }
@@ -913,6 +921,108 @@ def test_ask_api_rejects_out_of_scope_query_before_retrieval(monkeypatch) -> Non
         assert response.status_code == 200
         assert response.json()["citations"] == []
         assert "仅回答知识库" in response.json()["answer"]
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_feedback_api_records_feedback_for_an_audited_request() -> None:
+    """用户只能给已审计的请求留下赞/踩反馈。"""
+
+    db = create_test_session()
+    request_id = "a0cba242-0ff6-4b55-a20e-95d86adb6d7c"
+    record_query_audit(
+        db=db,
+        request_id=request_id,
+        query="什么是混合检索？",
+        decision="allow",
+        answer_status="answered",
+    )
+    app.dependency_overrides[get_db] = lambda: db
+
+    try:
+        response = TestClient(app).post(
+            "/feedback",
+            json={
+                "request_id": request_id,
+                "feedback_type": "down",
+                "reason": "回答遗漏了关键词检索的作用。",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["request_id"] == request_id
+        assert body["feedback_type"] == "down"
+        assert body["reason"] == "回答遗漏了关键词检索的作用。"
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_feedback_api_rejects_unknown_request_id() -> None:
+    """随机或伪造 request_id 不得写入反馈。"""
+
+    db = create_test_session()
+    app.dependency_overrides[get_db] = lambda: db
+    try:
+        response = TestClient(app).post(
+            "/feedback",
+            json={
+                "request_id": "c53d5e82-ff42-4927-a673-888d590d9ef1",
+                "feedback_type": "up",
+            },
+        )
+
+        assert response.status_code == 404
+        assert response.json() == {"detail": "未找到可反馈的问答请求。"}
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_feedback_optimization_items_return_only_down_feedback_metadata() -> None:
+    """管理端只看到待改进反馈及脱敏审计元数据。"""
+
+    db = create_test_session()
+    down_request_id = "a0cba242-0ff6-4b55-a20e-95d86adb6d7c"
+    up_request_id = "b0cba242-0ff6-4b55-a20e-95d86adb6d7c"
+    db.add_all([
+        QueryAuditLog(
+            id="feedback-audit-down", request_id=down_request_id,
+            query_hash="a" * 64, decision="allow", answer_status="answered",
+            retrieved_chunk_ids=["chunk-1", "chunk-2"], retrieved_scores=[0.9, 0.8],
+            citation_numbers=[1], latency_ms=123,
+        ),
+        QueryAuditLog(
+            id="feedback-audit-up", request_id=up_request_id,
+            query_hash="b" * 64, decision="allow", answer_status="answered",
+            retrieved_chunk_ids=[], retrieved_scores=[], citation_numbers=[], latency_ms=100,
+        ),
+        AnswerFeedback(request_id=down_request_id, feedback_type="down", reason="引用不够完整。"),
+        AnswerFeedback(request_id=up_request_id, feedback_type="up"),
+    ])
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+
+    try:
+        response = TestClient(app).get("/feedback/optimization-items")
+
+        assert response.status_code == 200
+        assert response.json()["items"] == [
+            {
+                "request_id": down_request_id,
+                "feedback_type": "down",
+                "reason": "引用不够完整。",
+                "created_at": response.json()["items"][0]["created_at"],
+                "updated_at": response.json()["items"][0]["updated_at"],
+                "decision": "allow",
+                "answer_status": "answered",
+                "retrieved_chunk_count": 2,
+                "citation_numbers": [1],
+                "latency_ms": 123,
+            }
+        ]
     finally:
         app.dependency_overrides.clear()
         db.close()

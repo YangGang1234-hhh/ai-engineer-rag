@@ -47,6 +47,7 @@
         .status-answered { color: var(--success); font-weight: 600; }
         .status-rejected { color: var(--warning); font-weight: 600; }
         .status-failed { color: var(--danger); font-weight: 600; }
+        .feedback-reason { max-width: 360px; white-space: pre-wrap; }
         @media (max-width: 760px) {
             main { width: min(100% - 20px, 1120px); padding-top: 24px; }
             header { flex-direction: column; }
@@ -82,6 +83,17 @@
         <section>
             <h2>决策分布</h2>
             <ul id="decision-counts" class="decision-list"></ul>
+        </section>
+
+        <section>
+            <h2>待优化反馈</h2>
+            <p>仅展示“待改进”反馈及脱敏链路信息，不展示原始问题或完整回答。</p>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>反馈时间</th><th>原因</th><th>决策</th><th>状态</th><th>召回数</th><th>引用</th><th>耗时</th></tr></thead>
+                    <tbody id="optimization-feedback"></tbody>
+                </table>
+            </div>
         </section>
 
         <section>
@@ -143,16 +155,38 @@
             });
         }
 
+        function renderOptimizationFeedback(items) {
+            const body = document.querySelector("#optimization-feedback"); body.replaceChildren();
+            if (items.length === 0) {
+                const row = document.createElement("tr"); const cell = document.createElement("td"); cell.colSpan = 7;
+                setText(cell, "暂时没有待优化反馈。"); row.append(cell); body.append(row); return;
+            }
+            items.forEach((item) => {
+                const row = document.createElement("tr");
+                const reason = createCell(item.reason || "未填写原因"); reason.className = "feedback-reason";
+                const state = createCell(item.answer_status); state.className = `status-${item.answer_status}`;
+                row.append(
+                    createCell(new Date(item.updated_at).toLocaleString("zh-CN")), reason,
+                    createCell(item.decision), state, createCell(item.retrieved_chunk_count),
+                    createCell(item.citation_numbers.length ? item.citation_numbers.join(", ") : "—"),
+                    createCell(latency(item.latency_ms)),
+                );
+                body.append(row);
+            });
+        }
+
         async function loadObservability() {
             refreshButton.disabled = true; setText(status, "正在加载观测数据……"); status.className = "";
             try {
-                const [summaryResponse, logsResponse] = await Promise.all([
+                const [summaryResponse, logsResponse, feedbackResponse] = await Promise.all([
                     fetch("/observability/summary", { headers: adminHeaders() }), fetch("/audit-logs?limit=20", { headers: adminHeaders() }),
+                    fetch("/feedback/optimization-items?limit=20", { headers: adminHeaders() }),
                 ]);
-                const [summary, logData] = await Promise.all([summaryResponse.json(), logsResponse.json()]);
+                const [summary, logData, feedbackData] = await Promise.all([summaryResponse.json(), logsResponse.json(), feedbackResponse.json()]);
                 if (!summaryResponse.ok) throw new Error(summary.detail || "指标加载失败。");
                 if (!logsResponse.ok) throw new Error(logData.detail || "日志加载失败。");
-                renderSummary(summary); renderLogs(logData.logs);
+                if (!feedbackResponse.ok) throw new Error(feedbackData.detail || "反馈列表加载失败。");
+                renderSummary(summary); renderLogs(logData.logs); renderOptimizationFeedback(feedbackData.items);
                 setText(status, `已更新：${new Date().toLocaleTimeString("zh-CN")}`);
             } catch (error) {
                 status.className = "error"; setText(status, error.message || "观测数据加载失败。");

@@ -59,7 +59,11 @@ def test_settings_resolves_local_data_paths_from_project_root() -> None:
     settings = Settings(
         database_url="sqlite:///./data/test.db",
         qdrant_path="./data/test-qdrant",
+        embedding_model="./model/test-embedding",
+        reranker_model="./model/test-reranker",
     )
 
     assert settings.database_url == f"sqlite:///{(PROJECT_ROOT / 'data/test.db').as_posix()}"
     assert settings.qdrant_path == str(PROJECT_ROOT / "data/test-qdrant")
+    assert settings.embedding_model == str(PROJECT_ROOT / "model/test-embedding")
+    assert settings.reranker_model == str(PROJECT_ROOT / "model/test-reranker")

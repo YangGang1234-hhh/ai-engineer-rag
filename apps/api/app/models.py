@@ -274,4 +274,38 @@ class QueryAuditLog(Base):
     error_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     model_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
+
+class AnswerFeedback(Base):
+    """用户对一次可追溯问答结果的反馈。"""
+
+    __tablename__ = "answer_feedback"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+    )
+    # 每次问答最多保留一条最新反馈；用户可把踩改为赞，或反向修改。
+    request_id: Mapped[str] = mapped_column(
+        ForeignKey("query_audit_logs.request_id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    # up / down。由服务层校验，避免把业务枚举与特定数据库绑定。
+    feedback_type: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    # 可选的用户说明；不保存模型回答或原始检索证据。
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
     

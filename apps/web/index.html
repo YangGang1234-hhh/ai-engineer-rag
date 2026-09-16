@@ -51,6 +51,14 @@
         .message.user .message-meta { color: var(--primary-dark); }
         .message.assistant .message-content { border: 1px solid var(--border); }
         .answer-citations { margin: 12px 0 0; color: var(--muted); font-size: .88rem; }
+        .feedback { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--border); }
+        .feedback-label, .feedback-status { color: var(--muted); font-size: .86rem; }
+        .feedback-button { min-height: 32px; padding: 0 10px; border-color: var(--border); color: var(--text); background: #fff; font-size: .85rem; }
+        .feedback-button:hover { color: var(--primary-dark); border-color: var(--primary); background: #edf4ff; }
+        .feedback-button.selected { color: var(--primary-dark); border-color: var(--primary); background: #dceaff; }
+        .feedback-reason { display: grid; width: 100%; gap: 8px; margin-top: 4px; }
+        .feedback-reason textarea { min-height: 64px; padding: 9px; border: 1px solid var(--border); border-radius: 6px; background: #fff; font-size: .88rem; }
+        .feedback-reason button { justify-self: start; min-height: 33px; }
         details { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
         summary { color: var(--primary-dark); font-size: .9rem; font-weight: 700; cursor: pointer; }
         .evidence-list { display: grid; gap: 10px; margin-top: 11px; }
@@ -135,7 +143,35 @@
             const body = addMessage("assistant", data.answer);
             const citations = document.createElement("p"); citations.className = "answer-citations";
             setText(citations, data.citations?.length ? `引用证据：${data.citations.map((item) => `[${item}]`).join(" ")}` : "本次回答未使用引用证据。");
-            body.append(citations); appendEvidence(body, data.evidence);
+            body.append(citations); appendEvidence(body, data.evidence); appendFeedbackControls(body, data.request_id);
+        }
+        async function readResponseBody(response) {
+            const contentType = response.headers.get("content-type") || "";
+            if (contentType.includes("application/json")) return response.json();
+            // 网关或未捕获的 500 可能返回 HTML / 纯文本，不能再次因 JSON 解析而掩盖原错误。
+            return { detail: response.ok ? "" : `服务暂时不可用（HTTP ${response.status}），请稍后重试。` };
+        }
+        function appendFeedbackControls(container, requestId) {
+            if (!requestId) return;
+            const feedback = document.createElement("div"), label = document.createElement("span"), upButton = document.createElement("button"), downButton = document.createElement("button"), status = document.createElement("span"), reasonPanel = document.createElement("div"), reasonInput = document.createElement("textarea"), submitDownButton = document.createElement("button");
+            feedback.className = "feedback"; label.className = "feedback-label"; status.className = "feedback-status"; reasonPanel.className = "feedback-reason"; reasonPanel.hidden = true;
+            upButton.type = downButton.type = submitDownButton.type = "button"; upButton.className = downButton.className = "feedback-button";
+            setText(label, "这条回答有帮助吗？"); setText(upButton, "👍 有帮助"); setText(downButton, "👎 待改进"); setText(submitDownButton, "提交反馈");
+            reasonInput.maxLength = 500; reasonInput.placeholder = "可选：例如回答遗漏了关键要点、引用不相关等。";
+            reasonPanel.append(reasonInput, submitDownButton); feedback.append(label, upButton, downButton, status, reasonPanel); container.append(feedback);
+
+            async function submitFeedback(type, reason = "") {
+                upButton.disabled = true; downButton.disabled = true; submitDownButton.disabled = true; setText(status, "正在保存反馈……");
+                try {
+                    const response = await fetch("/feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ request_id: requestId, feedback_type: type, reason: reason || null }) });
+                    const data = await readResponseBody(response); if (!response.ok) throw new Error(data.detail || "反馈提交失败。");
+                    upButton.classList.toggle("selected", type === "up"); downButton.classList.toggle("selected", type === "down"); reasonPanel.hidden = true;
+                    setText(status, "已收到反馈，感谢你的帮助。");
+                } catch (error) { setText(status, error.message || "反馈提交失败，请稍后重试。"); upButton.disabled = false; downButton.disabled = false; submitDownButton.disabled = false; }
+            }
+            upButton.addEventListener("click", () => submitFeedback("up"));
+            downButton.addEventListener("click", () => { reasonPanel.hidden = false; reasonInput.focus(); });
+            submitDownButton.addEventListener("click", () => submitFeedback("down", reasonInput.value.trim()));
         }
         function renderSearchResults(results) {
             const body = addMessage("assistant", results.length ? `已找到 ${results.length} 条相关证据。` : "知识库中没有找到足够证据。");
@@ -148,7 +184,7 @@
             const body = requestMode === "ask" ? { query, retrieval_limit: 5, candidate_limit: 20, context_max_tokens: 1500 } : { query, limit: 5, candidate_limit: 20 };
             try {
                 const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-                const data = await response.json(); if (!response.ok) throw new Error(data.detail || "请求失败，请稍后重试。");
+                const data = await readResponseBody(response); if (!response.ok) throw new Error(data.detail || "请求失败，请稍后重试。");
                 if (requestMode === "ask") renderAnswer(data); else renderSearchResults(data.results || []);
                 setStatus("已完成。", "success"); window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
             } catch (error) { addMessage("assistant", error.message || "请求失败，请稍后重试。"); setStatus("请求失败。", "error"); }

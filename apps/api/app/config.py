@@ -58,7 +58,7 @@ class Settings(BaseSettings):  # 定义应用配置类，继承自 BaseSettings�
     admin_api_key: str = ""
 
     def model_post_init(self, __context: object) -> None:
-        """将本地数据路径固定到项目根目录，避免受启动目录影响。"""
+        """将本地数据与模型路径固定到项目根目录，避免受启动目录影响。"""
 
         sqlite_prefix = "sqlite:///"
         if self.database_url.startswith(sqlite_prefix):
@@ -71,6 +71,15 @@ class Settings(BaseSettings):  # 定义应用配置类，继承自 BaseSettings�
         qdrant_path = Path(self.qdrant_path)
         if not qdrant_path.is_absolute():
             self.qdrant_path = str(PROJECT_ROOT / qdrant_path)
+
+        # 只有显式使用 ./ 或 ../ 的配置才表示本地模型目录；
+        # BAAI/xxx 这类 Hugging Face 仓库名仍交给 SentenceTransformers 处理。
+        for setting_name in ("embedding_model", "reranker_model"):
+            model_value = getattr(self, setting_name)
+            if model_value.startswith(("./", ".\\", "../", "..\\")):
+                model_path = Path(model_value)
+                if not model_path.is_absolute():
+                    setattr(self, setting_name, str(PROJECT_ROOT / model_path))
     
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",

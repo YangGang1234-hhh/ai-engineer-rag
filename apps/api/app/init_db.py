@@ -2,7 +2,13 @@ from app.database import Base,engine
 from sqlalchemy import text
 
 #导入Document,这样SQLAlchemy才知道documents表属于Base.metadata.
-from app.models import Document, DocumentChunk, DocumentTable, QueryAuditLog
+from app.models import (
+    AnswerFeedback,
+    Document,
+    DocumentChunk,
+    DocumentTable,
+    QueryAuditLog,
+)
 
 def ensure_cleaned_content_column() -> None:
     """为已有 documents 表补充 cleaned_content 字段。"""
@@ -91,6 +97,7 @@ def main() -> None:
     print(
     "Database initialized. Verified tables: "
     "documents, document_chunks, document_tables, query_audit_logs, "
+    "answer_feedback, "
     "document_chunks_fts"
         )
 

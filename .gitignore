@@ -5,6 +5,9 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 
+# 本地服务与排障日志
+*.log
+
 data/*.db
 data/*.db-*
 qdrant_storage/

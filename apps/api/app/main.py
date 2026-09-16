@@ -14,7 +14,7 @@ from fastapi import (
 from pydantic import BaseModel, Field  # 定义并校验 API 请求和响应。
 from sqlalchemy import select  # 构造数据库查询。
 from sqlalchemy.orm import Session  # 表示一次数据库会话。
-from app.models import Document, QueryAuditLog  # 读取知识库和审计记录。
+from app.models import AnswerFeedback, Document, QueryAuditLog  # 读取知识库和审计记录。
 from pathlib import Path  # 用于定位项目中的前端 HTML 文件。
 from fastapi.responses import FileResponse  # 用于把 HTML 文件返回给浏览器。
 from time import perf_counter
@@ -35,6 +35,7 @@ from app.query_guard import QueryGuardDecision, check_basic_query_safety
 from app.query_scope import classify_query_scope
 from app.audit import record_query_audit
 from app.admin_auth import require_admin_api_key
+from app.feedback import FeedbackType, record_answer_feedback
 
 from app.document_processing import chunk_document  # 负责把文档切分为 chunks。
 from app.full_text import (
@@ -98,9 +99,44 @@ class AskRequest(BaseModel):
 class AskResponse(BaseModel):
     """RAG 问答响应。"""
 
+    request_id: str  # 用于后续提交用户反馈并关联审计记录。
     answer: str  # LLM 生成的最终答案。
     citations: list[int]  # 答案使用的证据编号。
     evidence: list[CitationResponse]  # 实际发送给 LLM 的证据。
+
+
+class FeedbackRequest(BaseModel):
+    """用户对一次问答结果的赞/踩反馈。"""
+
+    request_id: str = Field(min_length=36, max_length=36)
+    feedback_type: FeedbackType
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class FeedbackResponse(BaseModel):
+    request_id: str
+    feedback_type: FeedbackType
+    reason: str | None
+    updated_at: datetime
+
+
+class FeedbackOptimizationItem(BaseModel):
+    """供管理员排查的低质量反馈，始终不返回原问题和完整回答。"""
+
+    request_id: str
+    feedback_type: FeedbackType
+    reason: str | None
+    created_at: datetime
+    updated_at: datetime
+    decision: str
+    answer_status: str
+    retrieved_chunk_count: int
+    citation_numbers: list[int]
+    latency_ms: int | None
+
+
+class FeedbackOptimizationListResponse(BaseModel):
+    items: list[FeedbackOptimizationItem]
 
 class UploadResponse(BaseModel):
     """Markdown 文档上传后的处理结果。"""
@@ -280,6 +316,47 @@ def create_app() -> FastAPI:
                     model_name=log.model_name,
                 )
                 for log in logs
+            ]
+        )
+
+    @app.get(
+        "/feedback/optimization-items",
+        response_model=FeedbackOptimizationListResponse,
+        tags=["feedback"],
+        dependencies=[Depends(require_admin_api_key)],
+    )
+    def list_feedback_optimization_items(
+        feedback_type: FeedbackType = FeedbackType.DOWN,
+        limit: int = Query(default=50, gt=0, le=100),
+        db: Session = Depends(get_db),
+    ) -> FeedbackOptimizationListResponse:
+        """返回待优化反馈及可排查的脱敏链路信息。"""
+
+        rows = db.execute(
+            select(AnswerFeedback, QueryAuditLog)
+            .join(
+                QueryAuditLog,
+                AnswerFeedback.request_id == QueryAuditLog.request_id,
+            )
+            .where(AnswerFeedback.feedback_type == str(feedback_type))
+            .order_by(AnswerFeedback.updated_at.desc())
+            .limit(limit)
+        ).all()
+        return FeedbackOptimizationListResponse(
+            items=[
+                FeedbackOptimizationItem(
+                    request_id=feedback.request_id,
+                    feedback_type=FeedbackType(feedback.feedback_type),
+                    reason=feedback.reason,
+                    created_at=feedback.created_at,
+                    updated_at=feedback.updated_at,
+                    decision=audit_log.decision,
+                    answer_status=audit_log.answer_status,
+                    retrieved_chunk_count=len(audit_log.retrieved_chunk_ids),
+                    citation_numbers=audit_log.citation_numbers,
+                    latency_ms=audit_log.latency_ms,
+                )
+                for feedback, audit_log in rows
             ]
         )
 
@@ -476,6 +553,7 @@ def create_app() -> FastAPI:
                 reason=basic_guard.reason,
             )
             return AskResponse(
+                request_id=request_id,
                 answer=basic_guard.user_message or "该请求无法处理。",
                 citations=[], evidence=[],
             )
@@ -496,6 +574,7 @@ def create_app() -> FastAPI:
                 reason=scope_guard.reason,
             )
             return AskResponse(
+                request_id=request_id,
                 answer=scope_guard.user_message or "该请求不属于知识库问答范围。",
                 citations=[], evidence=[],
             )
@@ -521,6 +600,7 @@ def create_app() -> FastAPI:
                 chunks=chunks,
             )
             return AskResponse(
+                request_id=request_id,
                 answer=evidence_guard.user_message or "知识库中没有足够证据回答该问题。",
                 citations=[],
                 evidence=[],
@@ -578,6 +658,7 @@ def create_app() -> FastAPI:
 
         # 第四步：返回答案、引用编号和实际使用的证据。
         response = AskResponse(
+            request_id=request_id,
             answer=answer.answer,
             citations=answer.citations,
             evidence=[
@@ -593,6 +674,37 @@ def create_app() -> FastAPI:
             citations=answer.citations,
         )
         return response
+
+    @app.post(
+        "/feedback",
+        response_model=FeedbackResponse,
+        tags=["feedback"],
+    )
+    def submit_feedback(
+        request: FeedbackRequest,
+        db: Session = Depends(get_db),
+    ) -> FeedbackResponse:
+        """记录用户对一次已审计问答的最新反馈。"""
+
+        try:
+            feedback = record_answer_feedback(
+                db=db,
+                request_id=request.request_id,
+                feedback_type=request.feedback_type,
+                reason=request.reason,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="未找到可反馈的问答请求。",
+            ) from exc
+
+        return FeedbackResponse(
+            request_id=feedback.request_id,
+            feedback_type=FeedbackType(feedback.feedback_type),
+            reason=feedback.reason,
+            updated_at=feedback.updated_at,
+        )
 
     @app.post(
         "/documents/upload",
