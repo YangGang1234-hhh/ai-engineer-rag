@@ -76,6 +76,10 @@ def test_upsert_chunk_vectors_writes_vectors_and_payload(monkeypatch) -> None:
             section_path="RAG 基础",
             position=0,
             token_count=12,
+            parent_chunk_id=None,
+            chunk_level="parent",
+            block_type="prose",
+            page_number=None,
         ),
         SimpleNamespace(
             id="chunk-2",
@@ -84,6 +88,10 @@ def test_upsert_chunk_vectors_writes_vectors_and_payload(monkeypatch) -> None:
             section_path="RAG 基础 > 向量检索",
             position=1,
             token_count=13,
+            parent_chunk_id="chunk-1",
+            chunk_level="child",
+            block_type="prose",
+            page_number=2,
         ),
     ]
 
@@ -109,6 +117,10 @@ def test_upsert_chunk_vectors_writes_vectors_and_payload(monkeypatch) -> None:
         "section_path": "RAG 基础",
         "position": 0,
         "token_count": 12,
+        "parent_chunk_id": None,
+        "chunk_level": "parent",
+        "block_type": "prose",
+        "page_number": None,
     }
 
 def test_delete_document_vectors_uses_document_id_filter(monkeypatch) -> None:
