@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Engineer RAG</title>
+    <style>
+        :root {
+            --canvas: #f5f7fb;
+            --surface: #ffffff;
+            --surface-muted: #f0f4fa;
+            --text: #162033;
+            --muted: #637189;
+            --border: #dbe3ef;
+            --primary: #165dc0;
+            --primary-dark: #104a9d;
+            --success: #067647;
+            --danger: #b42318;
+            --shadow: 0 14px 36px rgba(22, 32, 51, .09);
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-width: 320px;
+            background: var(--canvas);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+            line-height: 1.6;
+        }
+        main { width: min(920px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 64px; }
+        header { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 28px; }
+        .brand { display: flex; align-items: center; gap: 12px; }
+        .brand-mark { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 10px; color: #fff; background: linear-gradient(135deg, #1766d2, #0d47a1); font-weight: 800; }
+        h1 { margin: 0; font-size: 1.25rem; letter-spacing: -.02em; }
+        .brand p { margin: 1px 0 0; color: var(--muted); font-size: .86rem; }
+        nav { display: flex; gap: 14px; }
+        nav a { color: var(--muted); font-size: .88rem; font-weight: 600; text-decoration: none; }
+        nav a:hover { color: var(--primary); }
+        .welcome { padding: 28px; border: 1px solid var(--border); border-radius: 14px; background: linear-gradient(135deg, #fff 0%, #f0f6ff 100%); box-shadow: var(--shadow); }
+        .welcome h2 { margin: 0; color: #0d3f88; font-size: clamp(1.45rem, 4vw, 2rem); line-height: 1.3; }
+        .welcome p { max-width: 620px; margin: 10px 0 0; color: var(--muted); }
+        .suggestions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
+        .suggestion { padding: 8px 12px; border: 1px solid #bfcef0; border-radius: 999px; color: var(--primary-dark); background: #fff; font: inherit; font-size: .88rem; cursor: pointer; }
+        .suggestion:hover { border-color: var(--primary); background: #edf4ff; }
+        #conversation { display: grid; gap: 18px; margin: 26px 0; }
+        .message { display: grid; gap: 7px; }
+        .message-meta { color: var(--muted); font-size: .82rem; font-weight: 700; }
+        .message-content { max-width: min(760px, 100%); padding: 16px 18px; border-radius: 4px 14px 14px 14px; background: var(--surface); box-shadow: 0 3px 12px rgba(22, 32, 51, .05); white-space: pre-wrap; }
+        .message.user { justify-items: end; }
+        .message.user .message-content { border-radius: 14px 4px 14px 14px; color: #fff; background: var(--primary); }
+        .message.user .message-meta { color: var(--primary-dark); }
+        .message.assistant .message-content { border: 1px solid var(--border); }
+        .answer-citations { margin: 12px 0 0; color: var(--muted); font-size: .88rem; }
+        details { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+        summary { color: var(--primary-dark); font-size: .9rem; font-weight: 700; cursor: pointer; }
+        .evidence-list { display: grid; gap: 10px; margin-top: 11px; }
+        .evidence-item { padding: 12px; border-radius: 7px; background: var(--surface-muted); }
+        .evidence-item h3 { margin: 0 0 5px; color: var(--primary-dark); font-size: .88rem; }
+        .evidence-item p { margin: 0; color: #43516a; font-size: .9rem; white-space: pre-wrap; }
+        .composer { position: sticky; bottom: 16px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: rgba(255, 255, 255, .96); box-shadow: var(--shadow); backdrop-filter: blur(8px); }
+        textarea { display: block; width: 100%; min-height: 94px; padding: 11px 12px; border: 0; resize: vertical; color: var(--text); background: transparent; font: inherit; }
+        textarea:focus { outline: none; }
+        .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 2px 0; border-top: 1px solid var(--border); }
+        #status-message { min-height: 1.4em; margin: 0; color: var(--muted); font-size: .85rem; }
+        #status-message.error { color: var(--danger); } #status-message.success { color: var(--success); }
+        .actions { display: flex; gap: 8px; }
+        button { min-height: 38px; padding: 0 14px; border: 1px solid var(--primary); border-radius: 7px; color: #fff; background: var(--primary); font: inherit; font-size: .9rem; font-weight: 700; cursor: pointer; }
+        button:hover { background: var(--primary-dark); }
+        button.secondary { color: var(--primary-dark); background: #fff; }
+        button.secondary:hover { color: #fff; }
+        button:disabled { cursor: wait; opacity: .62; }
+        .empty-state { padding: 10px 4px; color: var(--muted); font-size: .93rem; text-align: center; }
+        @media (max-width: 620px) {
+            main { width: min(100% - 20px, 920px); padding-top: 18px; }
+            header { align-items: flex-start; } nav { flex-direction: column; gap: 2px; text-align: right; }
+            .welcome { padding: 21px; } .composer-footer { align-items: flex-end; flex-direction: column; }
+            #status-message { width: 100%; } .actions { width: 100%; } button { flex: 1; }
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <header>
+            <div class="brand"><div class="brand-mark">R</div><div><h1>AI Engineer RAG</h1><p>基于知识库证据的 AI 工程学习助手</p></div></div>
+            <nav aria-label="内部导航"><a href="/documents/manage">知识库管理</a><a href="/observability">内部观测</a></nav>
+        </header>
+
+        <section class="welcome" aria-labelledby="welcome-title">
+            <h2 id="welcome-title">围绕知识库，给你有依据的回答。</h2>
+            <p>我专注回答 RAG、检索、Agent 和 AI 工程实践相关问题；回答会附上实际使用的证据，知识库没有足够依据时会明确说明。</p>
+            <div class="suggestions" aria-label="示例问题">
+                <button class="suggestion" type="button">什么是混合检索？</button>
+                <button class="suggestion" type="button">如何评估 RAG 的忠实度？</button>
+                <button class="suggestion" type="button">重排序模型有什么作用？</button>
+            </div>
+        </section>
+
+        <section id="conversation" aria-live="polite">
+            <p class="empty-state" id="empty-state">输入一个问题，开始基于证据的问答。</p>
+        </section>
+
+        <form id="query-form" class="composer">
+            <label for="query-input" class="sr-only"></label>
+            <textarea id="query-input" name="query" rows="3" placeholder="例如：什么是混合检索？" required></textarea>
+            <div class="composer-footer"><p id="status-message" role="status">仅回答知识库范围内且有足够证据的问题。</p><div class="actions"><button class="secondary" type="button" id="search-button">仅看证据</button><button type="submit" id="ask-button">发送问题</button></div></div>
+        </form>
+    </main>
+    <script>
+        const form = document.querySelector("#query-form");
+        const input = document.querySelector("#query-input");
+        const askButton = document.querySelector("#ask-button");
+        const searchButton = document.querySelector("#search-button");
+        const status = document.querySelector("#status-message");
+        const conversation = document.querySelector("#conversation");
+        const emptyState = document.querySelector("#empty-state");
+        let requestMode = "ask";
+
+        function setText(element, text) { element.textContent = text || ""; }
+        function setStatus(message, type = "") { setText(status, message); status.className = type; }
+        function addMessage(role, content) {
+            emptyState?.remove();
+            const wrapper = document.createElement("article"); wrapper.className = `message ${role}`;
+            const meta = document.createElement("div"); meta.className = "message-meta"; setText(meta, role === "user" ? "你" : "AI Engineer RAG");
+            const body = document.createElement("div"); body.className = "message-content"; setText(body, content);
+            wrapper.append(meta, body); conversation.append(wrapper); return body;
+        }
+        function appendEvidence(container, evidence) {
+            if (!evidence || evidence.length === 0) return;
+            const details = document.createElement("details"), summary = document.createElement("summary"), list = document.createElement("div");
+            list.className = "evidence-list"; setText(summary, `查看 ${evidence.length} 条回答证据`); details.append(summary, list);
+            evidence.forEach((item) => { const article = document.createElement("article"), title = document.createElement("h3"), content = document.createElement("p"); article.className = "evidence-item"; setText(title, `[证据 ${item.citation_number}] ${item.section_path}`); setText(content, item.content); article.append(title, content); list.append(article); });
+            container.append(details);
+        }
+        function renderAnswer(data) {
+            const body = addMessage("assistant", data.answer);
+            const citations = document.createElement("p"); citations.className = "answer-citations";
+            setText(citations, data.citations?.length ? `引用证据：${data.citations.map((item) => `[${item}]`).join(" ")}` : "本次回答未使用引用证据。");
+            body.append(citations); appendEvidence(body, data.evidence);
+        }
+        function renderSearchResults(results) {
+            const body = addMessage("assistant", results.length ? `已找到 ${results.length} 条相关证据。` : "知识库中没有找到足够证据。");
+            appendEvidence(body, results.map((item, index) => ({ ...item, citation_number: index + 1 })));
+        }
+        async function submitQuery() {
+            const query = input.value.trim(); if (!query) { setStatus("请输入问题。", "error"); input.focus(); return; }
+            addMessage("user", query); input.value = ""; askButton.disabled = true; searchButton.disabled = true; setStatus("正在检索知识库，请稍候……");
+            const endpoint = requestMode === "ask" ? "/ask" : "/search";
+            const body = requestMode === "ask" ? { query, retrieval_limit: 5, candidate_limit: 20, context_max_tokens: 1500 } : { query, limit: 5, candidate_limit: 20 };
+            try {
+                const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+                const data = await response.json(); if (!response.ok) throw new Error(data.detail || "请求失败，请稍后重试。");
+                if (requestMode === "ask") renderAnswer(data); else renderSearchResults(data.results || []);
+                setStatus("已完成。", "success"); window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+            } catch (error) { addMessage("assistant", error.message || "请求失败，请稍后重试。"); setStatus("请求失败。", "error"); }
+            finally { askButton.disabled = false; searchButton.disabled = false; input.focus(); }
+        }
+        form.addEventListener("submit", (event) => { event.preventDefault(); requestMode = "ask"; submitQuery(); });
+        searchButton.addEventListener("click", () => { requestMode = "search"; submitQuery(); });
+        document.querySelectorAll(".suggestion").forEach((button) => button.addEventListener("click", () => { input.value = button.textContent; input.focus(); }));
+    </script>
+</body>
+</html>

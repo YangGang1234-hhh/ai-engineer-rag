@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Engineer RAG · 知识库管理</title>
+    <style>
+        :root { --background:#f4f7fb; --surface:#fff; --text:#18212f; --muted:#607086; --border:#d8e0ea; --primary:#1565c0; --danger:#b42318; --success:#067647; }
+        * { box-sizing:border-box; }
+        body { margin:0; background:var(--background); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; }
+        main { width:min(960px,calc(100% - 32px)); margin:0 auto; padding:42px 0 64px; }
+        header { display:flex; justify-content:space-between; align-items:flex-start; gap:24px; margin-bottom:28px; }
+        h1 { margin:0; color:#0d47a1; } header p { margin:10px 0 0; color:var(--muted); }
+        a { color:#0d47a1; font-weight:600; }
+        section { margin-top:20px; padding:24px; background:var(--surface); border:1px solid var(--border); border-radius:8px; }
+        h2 { margin-top:0; font-size:1.25rem; } label { display:block; margin-bottom:8px; font-weight:600; }
+        input[type="file"] { display:block; width:100%; margin-bottom:16px; }
+        button { min-height:40px; padding:0 16px; border:1px solid var(--primary); border-radius:6px; color:#fff; background:var(--primary); font:inherit; font-weight:600; cursor:pointer; }
+        button:disabled { opacity:.6; cursor:wait; } .error { color:var(--danger); } .success { color:var(--success); }
+        #document-list { display:grid; gap:10px; margin:0; padding:0; list-style:none; }
+        .document-item { display:flex; align-items:center; gap:14px; padding:13px; border:1px solid var(--border); border-radius:6px; }
+        .document-title { flex:1; font-weight:600; } .document-meta { color:var(--muted); font-size:.9rem; }
+        .delete-button { border-color:var(--danger); color:var(--danger); background:#fff; } .delete-button:hover { color:#fff; background:var(--danger); }
+        .auth-form { display:flex; gap:10px; align-items:end; } .auth-form label { flex:1; } .auth-form input { display:block; width:100%; min-height:40px; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font:inherit; }
+        #management-content[hidden] { display:none; }
+        @media (max-width:600px) { main { width:min(100% - 20px,960px); padding-top:24px; } header,.document-item { flex-direction:column; align-items:flex-start; } }
+    </style>
+</head>
+<body>
+    <main>
+        <header><div><h1>知识库管理</h1><p>导入、查看和维护 RAG 知识库文档。</p></div><a href="/">返回问答页</a></header>
+        <section><h2>管理员访问</h2><form id="auth-form" class="auth-form"><label for="admin-key">管理员密钥<input id="admin-key" type="password" autocomplete="off" placeholder="输入 ADMIN_API_KEY"></label><button type="submit">保存并加载</button></form><p id="auth-status" role="status">密钥仅保存在当前浏览器会话中。</p></section>
+        <div id="management-content" hidden>
+            <section><h2>导入资料</h2><form id="upload-form"><label for="file-input">选择 Markdown 或 PDF 文件</label><input id="file-input" type="file" accept=".md,.markdown,.pdf,text/markdown,application/pdf" required><button type="submit">上传并建立索引</button></form><p id="upload-status" role="status"></p></section>
+            <section><h2>已导入文档</h2><p id="document-list-status" role="status">正在加载文档……</p><ul id="document-list"></ul></section>
+        </div>
+    </main>
+    <script>
+        const form=document.querySelector("#upload-form"), fileInput=document.querySelector("#file-input"), uploadStatus=document.querySelector("#upload-status"), uploadButton=form.querySelector("button"), list=document.querySelector("#document-list"), listStatus=document.querySelector("#document-list-status"), authForm=document.querySelector("#auth-form"), adminKeyInput=document.querySelector("#admin-key"), authStatus=document.querySelector("#auth-status"), managementContent=document.querySelector("#management-content");
+        const setText=(element,value)=>{element.textContent=value||"";};
+        const adminHeaders=()=>{ const key=sessionStorage.getItem("adminApiKey"); return key ? {"X-Admin-API-Key":key} : {}; };
+        adminKeyInput.value=sessionStorage.getItem("adminApiKey")||"";
+        function setUploadStatus(message,type="") { setText(uploadStatus,message); uploadStatus.className=type; }
+        async function loadDocuments() { setText(listStatus,"正在加载文档……"); try { const response=await fetch("/documents",{headers:adminHeaders()}), data=await response.json(); if(!response.ok) throw new Error(data.detail||"文档列表加载失败。"); renderDocuments(data.documents); managementContent.hidden=false; setText(authStatus,"管理员验证成功，密钥仅保存在当前浏览器会话中。"); authStatus.className="success"; } catch(error) { managementContent.hidden=true; list.replaceChildren(); setText(listStatus,error.message||"文档列表加载失败。"); if(error.message.includes("管理员")) { setText(authStatus,"请输入正确的管理员密钥后加载。"); authStatus.className="error"; } } }
+        function renderDocuments(documents) { list.replaceChildren(); if(!documents.length) { setText(listStatus,"知识库中还没有文档。"); return; } setText(listStatus,`当前共有 ${documents.length} 份文档。`); documents.forEach((documentItem)=>{ const item=document.createElement("li"), title=document.createElement("span"), meta=document.createElement("span"), button=document.createElement("button"); item.className="document-item"; title.className="document-title"; meta.className="document-meta"; button.className="delete-button"; button.type="button"; setText(title,documentItem.title); setText(meta,`${documentItem.source_type} · ${documentItem.status}`); setText(button,"删除"); button.addEventListener("click",()=>deleteDocument(documentItem.document_id,documentItem.title,button)); item.append(title,meta,button); list.append(item); }); }
+        async function deleteDocument(id,title,button) { if(!window.confirm(`确定从知识库删除“${title}”吗？`)) return; button.disabled=true; try { const response=await fetch(`/documents/${encodeURIComponent(id)}`,{method:"DELETE",headers:adminHeaders()}); if(!response.ok) { const data=await response.json().catch(()=>({})); throw new Error(data.detail||"文档删除失败。"); } await loadDocuments(); } catch(error) { setText(listStatus,error.message||"文档删除失败。"); button.disabled=false; } }
+        authForm.addEventListener("submit",(event)=>{ event.preventDefault(); const key=adminKeyInput.value.trim(); if(!key) { setText(authStatus,"请输入管理员密钥。 "); authStatus.className="error"; return; } sessionStorage.setItem("adminApiKey",key); loadDocuments(); });
+        form.addEventListener("submit",async(event)=>{ event.preventDefault(); const file=fileInput.files[0]; if(!file) { setUploadStatus("请选择一个 Markdown 或 PDF 文件。","error"); return; } const data=new FormData(); data.append("file",file); uploadButton.disabled=true; setUploadStatus("正在导入并建立索引，请稍候……"); try { const response=await fetch("/documents/upload",{method:"POST",body:data,headers:adminHeaders()}), result=await response.json(); if(!response.ok) throw new Error(result.detail||"文件上传失败。"); setUploadStatus(`导入成功：${result.title}，已创建 ${result.chunks_created} 个 chunk。`,`success`); form.reset(); await loadDocuments(); } catch(error) { setUploadStatus(error.message||"文件上传失败，请稍后重试。","error"); } finally { uploadButton.disabled=false; } });
+        if(adminKeyInput.value) loadDocuments(); else setText(listStatus,"请输入管理员密钥后加载文档列表。");
+    </script>
+</body>
+</html>

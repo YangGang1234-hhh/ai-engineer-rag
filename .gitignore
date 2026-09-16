@@ -1,0 +1,23 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+data/*.db
+data/*.db-*
+qdrant_storage/
+
+node_modules/
+.next/
+
+# 本地运行数据与模型
+data/
+model/
+
+# 测试临时目录
+.pytest-tmp*/
+
+# 自动生成的评测报告
+datasets/eval/reports/

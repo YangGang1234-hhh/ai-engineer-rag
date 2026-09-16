@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-engineer-rag"
+version = "0.1.0"
+description = "An evidence-based and evaluable learning knowledge-base RAG system."
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "pydantic-settings>=2.6,<3.0",
+  "sqlalchemy>=2.0,<3.0",
+  "qdrant-client>=1.12,<2.0",
+  "uvicorn[standard]>=0.30,<1.0",
+  "tiktoken>=0.8,<1.0",
+  "sentence-transformers>=3.0,<4.0",
+  "openai>=1.60,<2.0",
+    # 支持 FastAPI 解析 multipart/form-data 文件上传。
+  "python-multipart>=0.0.9,<1.0",
+  # 提取 PDF 正文、页码和表格结构。
+  "pdfplumber>=0.11,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27,<1.0",
+  "pytest>=8.0,<9.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["apps/api"]
+
+[tool.setuptools.packages.find]
+where = ["apps/api"]

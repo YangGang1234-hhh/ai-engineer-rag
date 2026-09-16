@@ -1,0 +1,27 @@
+# 密钥与本地环境
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-tmp*
+
+# 本地运行数据与模型：下一步通过 volume 挂载
+data/
+model/
+datasets/
+
+# Git 与编辑器文件
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# 测试、文档与临时文件不属于运行镜像
+tests/
+docs/
+*.log
+
+# 前端依赖（当前项目不需要）
+node_modules/
+.next/

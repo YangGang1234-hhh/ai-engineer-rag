@@ -1,0 +1,43 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-engineer-rag-api
+
+    ports:
+      - "8000:8000"
+
+    # 从本机 .env 读取 LLM Key、管理员密钥和模型配置。
+    # .env 不会被写入镜像。
+    env_file:
+      - .env
+
+    environment:
+      # 显式声明容器中的持久化路径。
+      DATABASE_URL: sqlite:///./data/ai_engineer_rag.db
+      QDRANT_PATH: ./data/qdrant
+
+      # 使用已经下载好的本地模型，不在容器运行时访问 Hugging Face。
+      EMBEDDING_MODEL: ./model/bge-small-zh-v1.5
+      RERANKER_MODEL: ./model/bge-reranker-v2-m3
+
+    volumes:
+      # SQLite、FTS 和本地 Qdrant 索引。
+      - ./data:/app/data
+
+      # 原始上传资料与评测报告。
+      - ./datasets:/app/datasets
+
+      # 本地模型只读挂载，避免容器误修改。
+      - ./model:/app/model:ro
+
+    # 每次首次启动都确认数据库表和 FTS 表存在，再启动 API。
+    command:
+      - sh
+      - -c
+      - >
+        python -m app.init_db &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+    restart: unless-stopped

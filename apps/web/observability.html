@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Engineer RAG · 内部观测</title>
+    <style>
+        :root {
+            --background: #f4f7fb;
+            --surface: #ffffff;
+            --text: #18212f;
+            --muted: #607086;
+            --border: #d8e0ea;
+            --primary: #1565c0;
+            --success: #067647;
+            --warning: #b54708;
+            --danger: #b42318;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: var(--background);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+        }
+        main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 42px 0 64px; }
+        header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+        h1 { margin: 0; color: #0d47a1; font-size: clamp(2rem, 5vw, 2.6rem); }
+        header p { margin: 10px 0 0; color: var(--muted); }
+        a { color: #0d47a1; font-weight: 600; }
+        button { min-height: 40px; padding: 0 15px; border: 1px solid var(--primary); border-radius: 6px; color: #fff; background: var(--primary); font: inherit; font-weight: 600; cursor: pointer; }
+        button:disabled { opacity: .65; cursor: wait; }
+        .admin-access { display:flex; align-items:end; gap:10px; margin:18px 0; } .admin-access label { flex:1; color:var(--muted); font-size:.9rem; font-weight:600; } .admin-access input { display:block; width:100%; min-height:40px; margin-top:5px; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font:inherit; }
+        .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+        .card, section { padding: 20px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+        .metric-label { color: var(--muted); font-size: .9rem; }
+        .metric-value { margin-top: 8px; color: #0d47a1; font-size: 1.8rem; font-weight: 700; }
+        section { margin-top: 20px; }
+        h2 { margin: 0 0 14px; font-size: 1.2rem; }
+        #status { min-height: 1.5em; color: var(--muted); }
+        #status.error { color: var(--danger); }
+        .decision-list { display: flex; flex-wrap: wrap; gap: 10px; padding: 0; margin: 0; list-style: none; }
+        .decision { padding: 8px 10px; border-radius: 5px; background: #eef3f8; }
+        table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+        th, td { padding: 11px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+        th { color: var(--muted); font-weight: 600; }
+        .status-answered { color: var(--success); font-weight: 600; }
+        .status-rejected { color: var(--warning); font-weight: 600; }
+        .status-failed { color: var(--danger); font-weight: 600; }
+        @media (max-width: 760px) {
+            main { width: min(100% - 20px, 1120px); padding-top: 24px; }
+            header { flex-direction: column; }
+            .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .table-wrap { overflow-x: auto; }
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <header>
+            <div>
+                <h1>内部观测</h1>
+                <p>基于脱敏审计日志的 RAG 运行概览，不展示原始问题或回答。</p>
+            </div>
+            <div><a href="/">返回问答页</a>　<button id="refresh-button" type="button">刷新数据</button></div>
+        </header>
+
+        <form id="auth-form" class="admin-access"><label for="admin-key">管理员密钥<input id="admin-key" type="password" autocomplete="off" placeholder="输入 ADMIN_API_KEY"></label><button type="submit">保存并加载</button></form>
+
+        <p id="status" role="status">正在加载观测数据……</p>
+        <div class="metrics" aria-label="核心指标">
+            <article class="card"><div class="metric-label">总请求数</div><div class="metric-value" id="total-requests">—</div></article>
+            <article class="card"><div class="metric-label">回答率</div><div class="metric-value" id="answer-rate">—</div></article>
+            <article class="card"><div class="metric-label">拒答率</div><div class="metric-value" id="rejection-rate">—</div></article>
+            <article class="card"><div class="metric-label">失败率</div><div class="metric-value" id="failure-rate">—</div></article>
+            <article class="card"><div class="metric-label">平均耗时</div><div class="metric-value" id="average-latency">—</div></article>
+            <article class="card"><div class="metric-label">P95 耗时</div><div class="metric-value" id="p95-latency">—</div></article>
+            <article class="card"><div class="metric-label">已回答</div><div class="metric-value" id="answered-requests">—</div></article>
+            <article class="card"><div class="metric-label">拒答 / 失败</div><div class="metric-value" id="rejected-failed">—</div></article>
+        </div>
+
+        <section>
+            <h2>决策分布</h2>
+            <ul id="decision-counts" class="decision-list"></ul>
+        </section>
+
+        <section>
+            <h2>最近请求</h2>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>时间</th><th>决策</th><th>状态</th><th>原因</th><th>召回数</th><th>耗时</th></tr></thead>
+                    <tbody id="recent-logs"></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+    <script>
+        const status = document.querySelector("#status");
+        const refreshButton = document.querySelector("#refresh-button");
+        const authForm = document.querySelector("#auth-form");
+        const adminKeyInput = document.querySelector("#admin-key");
+        const metricIds = ["total-requests", "answer-rate", "rejection-rate", "failure-rate", "average-latency", "p95-latency", "answered-requests", "rejected-failed"];
+
+        function setText(element, value) { element.textContent = value ?? "—"; }
+        function percent(value) { return `${(value * 100).toFixed(1)}%`; }
+        function latency(value) { return value === null ? "—" : `${value} ms`; }
+        function createCell(value) { const cell = document.createElement("td"); setText(cell, value); return cell; }
+        function adminHeaders() { const key = sessionStorage.getItem("adminApiKey"); return key ? { "X-Admin-API-Key": key } : {}; }
+        adminKeyInput.value = sessionStorage.getItem("adminApiKey") || "";
+
+        function renderSummary(summary) {
+            setText(document.querySelector("#total-requests"), summary.total_requests);
+            setText(document.querySelector("#answer-rate"), percent(summary.answer_rate));
+            setText(document.querySelector("#rejection-rate"), percent(summary.rejection_rate));
+            setText(document.querySelector("#failure-rate"), percent(summary.failure_rate));
+            setText(document.querySelector("#average-latency"), latency(summary.average_latency_ms));
+            setText(document.querySelector("#p95-latency"), latency(summary.p95_latency_ms));
+            setText(document.querySelector("#answered-requests"), summary.answered_requests);
+            setText(document.querySelector("#rejected-failed"), `${summary.rejected_requests} / ${summary.failed_requests}`);
+            const decisions = document.querySelector("#decision-counts");
+            decisions.replaceChildren();
+            if (summary.decision_counts.length === 0) {
+                const empty = document.createElement("li"); setText(empty, "尚无审计记录。"); decisions.append(empty); return;
+            }
+            summary.decision_counts.forEach((item) => {
+                const element = document.createElement("li"); element.className = "decision";
+                setText(element, `${item.decision}: ${item.count}`); decisions.append(element);
+            });
+        }
+
+        function renderLogs(logs) {
+            const body = document.querySelector("#recent-logs"); body.replaceChildren();
+            if (logs.length === 0) {
+                const row = document.createElement("tr"); const cell = document.createElement("td"); cell.colSpan = 6;
+                setText(cell, "尚无审计记录。完成一次问答后会在这里显示。 "); row.append(cell); body.append(row); return;
+            }
+            logs.forEach((log) => {
+                const row = document.createElement("tr");
+                row.append(createCell(new Date(log.created_at).toLocaleString("zh-CN")), createCell(log.decision));
+                const state = createCell(log.answer_status); state.className = `status-${log.answer_status}`; row.append(state);
+                row.append(createCell(log.reason || "—"), createCell(log.retrieved_chunk_ids.length), createCell(latency(log.latency_ms)));
+                body.append(row);
+            });
+        }
+
+        async function loadObservability() {
+            refreshButton.disabled = true; setText(status, "正在加载观测数据……"); status.className = "";
+            try {
+                const [summaryResponse, logsResponse] = await Promise.all([
+                    fetch("/observability/summary", { headers: adminHeaders() }), fetch("/audit-logs?limit=20", { headers: adminHeaders() }),
+                ]);
+                const [summary, logData] = await Promise.all([summaryResponse.json(), logsResponse.json()]);
+                if (!summaryResponse.ok) throw new Error(summary.detail || "指标加载失败。");
+                if (!logsResponse.ok) throw new Error(logData.detail || "日志加载失败。");
+                renderSummary(summary); renderLogs(logData.logs);
+                setText(status, `已更新：${new Date().toLocaleTimeString("zh-CN")}`);
+            } catch (error) {
+                status.className = "error"; setText(status, error.message || "观测数据加载失败。");
+            } finally { refreshButton.disabled = false; }
+        }
+        refreshButton.addEventListener("click", loadObservability);
+        authForm.addEventListener("submit", (event) => { event.preventDefault(); const key = adminKeyInput.value.trim(); if (!key) { status.className = "error"; setText(status, "请输入管理员密钥。"); return; } sessionStorage.setItem("adminApiKey", key); loadObservability(); });
+        if (adminKeyInput.value) loadObservability(); else { status.className = "error"; setText(status, "请输入管理员密钥后加载观测数据。"); }
+    </script>
+</body>
+</html>
